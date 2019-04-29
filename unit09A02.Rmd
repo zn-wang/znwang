@@ -1,0 +1,535 @@
+---
+title: UNIT09A：期中專案(OLIST)資料探索
+author: 中山大學管理學院 卓雍然
+date: "`r Sys.time()`"
+output: 
+  html_document:
+    highlight: pygments
+    theme: flatly
+    css: style.css
+---
+
+```{r results='hide', message=FALSE, warning=FALSE, echo=F}
+# 這些程式碼設定網頁的格式，並安裝、載入一些基本的套件，請大家不要去改動<br>
+rm(list=ls(all=T))
+knitr::opts_chunk$set(comment = NA)
+knitr::opts_knit$set(global.par = TRUE)
+par(cex=0.8)
+options(scipen=20, digits=5, width=80)
+if(!require(pacman)) install.packages("pacman")
+```
+<hr>
+
+**單元摘要：** 期中專案(OLIST)資料探索
+
+<br>
+```{r results='hide', message=FALSE, warning=FALSE}
+pacman::p_load(dplyr, ggplot2, dplyr, data.table, readr, data.table, plotly, d3heatmap, googleVis)
+```
+<hr>
+
+
+<span style="font-size:24px">`r "\U1F4A1"`</span>
+讀完原始資料之後，先將資料壓縮起來，之後再從壓縮檔讀進會比較快、比較方便<br>
+```{r}
+load("data/olist.rdata")
+load("data/Z.rdata")
+pay = fread("data/olist_order_payments_dataset.csv")
+```
+
+<br><br><hr>
+
+### 【B】檢視資料     
+
+##### B1. 確認鍵值欄位
+
+Sellers: `S$seller_id`
+```{r}
+n_distinct(S$seller_id) == nrow(S)
+```
+
+Products: `P$product_id`
+```{r}
+n_distinct(S$seller_id) == nrow(S)
+```
+<br>
+
+##### B2. 多重鍵值
+
+Reviews: `R$review_id`
+```{r}
+n_distinct(R$review_id) == nrow(R)
+```
+
+Reviews: `R$review_id` & `R$order_id`
+```{r}
+nrow(unique(R[, 1:2])) == nrow(R)
+```
+
+一則評論最多可能談到三個訂單
+```{r}
+table(R$review_id) %>% table
+```
+<br>
+
+##### B3. 外來鍵值
+Order Items: `I$order_id` & `I$order_item_id`
+```{r}
+nrow(unique(I[, 1:2])) == nrow(I)
+```
+
+<span style="font-size:24px">`r "\U1F5FF"`</span>
+一筆訂單最多會有多少項目(`order_item_id`)呢？
+```{r}
+table(I$order_id) %>% table
+table(I$order_id) %>% table %>% prop.table %>% round(3)
+```
+
+<span style="font-size:24px">`r "\U1F5FF"`</span>
+一筆訂單最多會有多少個賣家(`seller_id`)呢？ 
+```{r}
+table( unique(I[, c(1,4)])$order_id ) %>% table
+```
+
+<span style="font-size:24px">`r "\U1F5FF"`</span>
+一筆訂單最多會包含多少種產品(`product_id`)呢？
+```{r}
+table( unique(I[, c(1,3)])$order_id ) %>% table
+```
+
+<br><br><hr>
+```{r}
+# 平均訂單金額
+O_price = I %>% 
+  group_by(order_id) %>%
+    summarise(money = sum(price))
+
+mean(O_price$money)
+#137.7541
+```
+
+
+```{r}
+# 商品類別營業額
+  
+  P_cate = select(P, product_id, product_category_name)
+  order_cate = left_join(I, P_cate, by = c("product_id")) %>% 
+    left_join(TPC, by = c("product_category_name"))
+  
+```
+
+```{r}
+# 銷售額前十大類別
+
+  order_cate %>% 
+    group_by(product_category_name_english) %>%
+    summarise(
+    itemsSold = n(),
+    totalRev = sum(price),
+    avgPrice = mean(price),
+    noProduct = n_distinct(product_id),
+    noSeller = n_distinct(seller_id),
+    dummy = 2018) %>% 
+    arrange(desc(totalRev)) %>% 
+    head(10)
+
+```
+```{r}
+order_cate %>%
+  ggplot(aes(x = shipping_limit_date, y = price)) +
+    geom_density()
+```
+
+```{r}
+order_cate %>% 
+  filter(shipping_limit_date > "2018-06-01 00:00:00") %>% 
+  group_by(product_category_name_english) %>%
+    summarise(
+    itemsSold = n(),
+    totalRev = sum(price),
+    avgPrice = mean(price),
+    noProduct = n_distinct(product_id),
+    noSeller = n_distinct(seller_id),
+    dummy = 2018) %>% 
+    arrange(desc(totalRev)) %>% 
+    head(10)
+```
+
+```{r}
+order_cate %>% 
+    group_by(product_category_name_english) %>% 
+    summarise(itemsSold = n(),
+    totalRev = sum(price),
+    avgPrice = mean(price),
+    noProduct = n_distinct(product_id),
+    noSeller = n_distinct(seller_id),
+    dummy = 2018
+   ) %>% 
+    arrange(desc(totalRev)) %>% 
+    top_n(10,wt=totalRev) ->aa
+aa%>%
+    ggplot(aes(x = product_category_name_english, y = totalRev,fill = noProduct)) + 
+    geom_col() +
+    coord_flip()
+```
+```{r}
+
+op = options(gvis.plot.tag='chart')
+plot( gvisMotionChart(
+  aa, "product_category_name_english", "dummy", 
+  options=list(width=800, height=600) ))
+
+```
+
+
+
+```{r}
+    # 單筆訂單消費金額圖 只有商品沒有運費
+  
+    I %>%                                      
+    select(order_id, price) %>% 
+    distinct() %>% 
+    filter(price <= 500) %>%
+    ggplot(aes(x = price)) + 
+      geom_histogram()
+```
+
+```{r}
+  # 單筆訂單消費金額
+  
+  I %>% 
+    select(order_id, price, freight_value) %>% 
+    distinct() %>% 
+    filter(price < 500) %>% 
+    mutate(pricecut = (price %/% 50 + 1) * 50 ) %>% 
+    ggplot(aes(x = pricecut)) + 
+      geom_histogram()
+```
+
+```{r}
+sequen1 = sapply(pay$payment_sequential, function(x) ifelse(x == 1, 1, 0))
+pay = cbind(pay, sequen1)
+
+pay %>% 
+  filter(payment_type != "not_defined") %>%
+  ggplot(aes(x = payment_type, fill = payment_type)) + 
+    geom_bar(position = "dodge") +
+    facet_wrap(.~factor(sequen1), nrow = 2, scales = "free")
+```
+```{r}
+table(pay$payment_type, pay$sequen1) %>% 
+  addmargins()
+
+table(pay$payment_type, pay$sequen1) %>% 
+  prop.table() %>% 
+  round(3) %>%
+  addmargins()
+```
+```{r}
+table(pay$sequen1, pay$payment_type) %>% 
+  prop.table() %>% 
+  round(3) %>% 
+  addmargins()
+```
+
+```{r}
+CO = left_join(C, O, by=c("customer_id") )
+
+CO %>% 
+    group_by(customer_unique_id) %>% 
+    summarise(count = n()) %>% 
+    ggplot(aes(x = count)) +
+      geom_histogram()
+```
+
+```{r}
+# 客戶購買次數
+
+CO_count = CO %>% 
+    group_by(customer_unique_id) %>% 
+    summarise(count = n())
+
+e = table(CO_count$count)
+e
+```
+
+
+```{r}
+round(prop.table(e),3)
+```
+
+### 【C】製作欄位
+
+<span style="font-size:24px">`r "\U1F4A1"`</span>
+做分析之前我們一定要先決定分析對象(Unit of Analysis)<br>
+
+假如我們要對所有的賣家做分析，我們就要依`selller_id`做彙總； 先從訂單項目(`I`)做起 
+```{r}
+Z = I %>% group_by(seller_id) %>% summarise(
+  ItemsSold = n(),
+  Rev = sum(price),
+  noProd = n_distinct(product_id),
+  avgPrice = mean(price),
+  maxPrice = max(price),
+  minPrice = min(price),
+  avgFreight = mean(freight_value),
+  avgRevProd = Rev/noProd,
+  avgItemsProd = ItemsSold/noProd
+)
+summary(Z)
+```
+
+
+計算每一個賣家的評等時要考慮：
+
++ 每一則評論可能有多於一個訂單而
++ 每一筆訂單可能包含多一個賣家
+
+這兩個問題。
+```{r}
+X = unique(I[,c(1,4)]) %>% left_join(R[,2:3]) %>% 
+  group_by(seller_id) %>% summarise(
+    noReview = n(),
+    avgScore = mean(review_score),
+    minScore = min(review_score),
+    maxScore = max(review_score)) 
+summary(X)
+```
+
+最後併入賣家的基本資料
+```{r}
+Z = Z %>% left_join(X) %>% left_join(S)
+is.na(Z) %>% colSums
+```
+
+做一個簡單的分析： 賣家的平均評等最高的20個省份是 ...
+```{r}
+tapply(Z$avgScore, Z$seller_state, mean) %>% sort %>% tail(20) 
+```
+
+<br><br><hr>
+
+### 【D】併入其它資料
+`Funnel`資料集裡面有更多賣家欄位，但是它的資料筆數不多
+```{r}
+Z1 = left_join(Q, L) %>% inner_join(Z)
+dim(Z1)
+```
+```{r}
+
+  
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+依賣家的行為做彙總
+```{r}
+behavior = group_by(Z1, lead_behaviour_profile) %>% summarise(
+  noSellers = n(),
+  totalRev = sum(Rev),
+  avgRev = mean(Rev),
+  avgReview = mean(noReview),
+  avgScore = mean(avgScore)
+  ) %>% arrange( desc(avgScore) )
+behavior
+```
+
+依產業別做彙總
+```{r}
+segment = group_by(Z1, business_segment) %>% summarise(
+  noSellers = n(),
+  totalRev = sum(Rev),
+  avgItemsSold = mean(ItemsSold),
+  avgPrice = totalRev/avgItemsSold,
+  avgRev = mean(Rev),
+  avgReview = mean(noReview),
+  avgScore = mean(avgScore)
+  ) %>% arrange( desc(totalRev) )
+segment
+```
+
+```{r}
+save(Z, Z1, segment, file="data/Z.rdata")
+```
+  
+```{r results='hide', message=FALSE, warning=FALSE}
+pacman::p_load(dplyr, ggplot2, readr, plotly, googleVis)
+library(googleVis)
+```
+
+
+```{r}
+closedeal = fread("./marketing-funnel-olist/olist_closed_deals_dataset.csv")
+m_qualified = fread("./marketing-funnel-olist/olist_marketing_qualified_leads_dataset.csv")
+```
+
+```{r}
+left_join(closedeal,m_qualified,by=c("mql_id") )->sr
+```
+
+```{r}
+n_distinct(sr$mql_id) == nrow(sr)
+```
+
+```{r}
+n_distinct(sr$seller_id) == nrow(sr)
+```
+```{r}
+n_distinct(sr$sdr_id) == nrow(sr)
+n_distinct(sr$sr_id) == nrow(sr)
+```
+
+```{r}
+nrow(unique(sr[, 2:4])) == nrow(sr)
+```
+
+```{r}
+table(sr$sdr_id) %>% table
+```
+
+```{r}
+table(sr$sr_id) %>% table
+```
+
+
+```{r}
+table(sr$sdr_id) %>% which.max
+```
+
+```{r}
+Sys.timezone()
+```
+
+```{r}
+close_date = as.Date(sr$won_date,"%Y-%m-%d",tz="Asia/Taipei")
+
+first_date = as.Date(sr$first_contact_date,"%Y-%m-%d ",tz="Asia/Taipei")
+```
+
+```{r}
+sr1 = sr[,-843]
+```
+
+```{r}
+sr1 = sr1 %>% 
+  mutate(Sales_length = close_date-first_date)
+
+sr1
+```
+
+```{r}
+which(sr1$Sales_length==0)
+```
+
+```{r}
+first = as.Date(first_date,"%Y-%m",tz="Asia/Taipei")
+
+```
+
+```{r}
+best_sr <- sr1 %>% 
+  group_by(sr_id) %>%
+  summarise(num=length(sr_id))
+
+best_sdr10 <- arrange(best_sdr,desc(num))%>% head(10)
+left_join(best_sdr10 ,sr1,by=c("sdr_id") )->topsdr
+```
+
+```{r}
+as.Date(Z1$won_date,"%Y-%m-%d",tz="Asia/Taipei")
+as.Date(Z1$first_contact_date,"%Y-%m-%d ",tz="Asia/Taipei")
+
+zxc = Z1 %>% 
+  group_by(sr_id) %>% 
+  summarise(price_sum = sum(Rev)) %>% 
+  arrange(desc(price_sum))
+
+Z1_kpi = Z1 %>% 
+  mutate(sum_score = avgScore * ItemsSold, talklength = difftime(won_date, first_contact_date)) %>% 
+  group_by(sr_id) %>% 
+  summarise(avg_score = sum(sum_score) / sum(ItemsSold), total_Rev = sum(Rev), contractlength = mean(as.numeric(talklength)), totalseller = n())
+
+sum(Z1_kpi$totalseller)
+```
+
+```{r}
+zaq = data.frame(
+  avg_score = Z1_kpi$avg_score,
+  total_Rev = Z1_kpi$total_Rev,
+  contractlength = as.numeric(Z1_kpi$contractlength),
+  totalseller = Z1_kpi$totalseller,
+  row.names = Z1_kpi$sdr_id
+) %>% t()
+
+d3heatmap(zaq, scale = "row", colors = "Spectral")
+```
+
+```{r}
+gg = Z1_kpi %>%
+  ggplot(aes(x = sqrt(contractlength) ,y = totalseller)) + 
+  geom_point(aes(size = price_sum, color = avg_score)) +
+  geom_text(aes(label=sr_id), size=2)
+
+ggplotly(gg)
+```
+
+```{r}
+Z1 %>% 
+  select(seller_id, sr_id, Rev) %>%
+  arrange(desc(Rev)) %>%
+  top_n(10)
+```
+
+```{r}
+
+  
+  
+```
+
+```{r}
+sl = group_by(topsdr, sr_id) %>% summarise(
+  numdeal = n(),
+  totalsl = sum(Sales_length),
+  avgsl = mean(Sales_length)
+  ) %>% arrange( desc(numdeal) )
+sl
+```
+
+
+```{r}
+g = ggplot(sl, aes(x = numdeal ,y =avgsl)) + 
+  geom_point(aes(size=sqrt(numdeal))) +
+  geom_text(aes(label=sdr_id), size=3)
+
+ggplotly(g)
+```
+
+
+```{r}
+bh = group_by(topsdr, sdr_id,lead_behaviour_profile) %>% 
+  summarise(numdeal = n()) %>% 
+  arrange( desc(numdeal) )
+
+bh
+```
+
+```{r}
+ggplot(bh, aes(lead_behaviour_profile,sdr_id)) + #aes(x,y)
+    geom_tile(aes(fill = numdeal),colour = "white")+ #geom_tile: 區塊著色
+    scale_fill_gradient(low = "white",high = "steelblue",)+ #數值低：白色
+    theme(axis.text.x = element_text(angle=90, hjust=1))
+```
+
+```{r}
+table(Z1$lead_behaviour_profile)
+```
+<br><br><br><hr>
+
+
+
